@@ -1,17 +1,20 @@
+import os
 import streamlit as st
 from google import genai
 from google.genai import types
-import requests
 import logging
 
+# --- Configuration ---
+# Set logging level (optional, but good for debugging)
+logging.basicConfig(level=logging.INFO)
 
-# --- Defining variables and parameters  ---
+# --- Defining variables and parameters ---
 REGION = "global"
-PROJECT_ID = "eduai-478610" # TO DO: Insert Project ID
+# TO DO: Insert your actual Project ID here
+PROJECT_ID = "eduai-478610" 
 GEMINI_MODEL_NAME = "gemini-2.5-flash"
 
 # Set the title and icon for your Streamlit app.
-# This should be the first Streamlit command in your script.
 st.set_page_config(
     page_title="EduAI Tutor",
     page_icon="📚", 
@@ -27,22 +30,19 @@ st.markdown("""
     background-color: #E6F0FF; /* A light, academic blue */
 }
 
-/* --- ICON STYLES (NEW ICONS) --- */
+/* --- ICON STYLES --- */
 
 /* Target the assistant (AI tutor) messages */
+/* Note: Streamlit uses emojis/text as role icons by default. We adjust the color here. */
 .stChatMessage:nth-child(odd) .st-emotion-cache-1c7icp5.e1gr2sg30 > div:first-child {
-    content: "💡"; /* Tutor icon: Light Bulb (illumination/guidance) */
-    font-size: 24px;
     background-color: #0047AB !important; /* Cobalt blue for tutor */
-    color: white !important; /* Ensure the emoji is visible */
+    color: white !important;
 }
 
 /* Target the user (student) messages */
 .stChatMessage:nth-child(even) .st-emotion-cache-1c7icp5.e1gr2sg30 > div:first-child {
-    content: "💭"; /* Student icon: Thought Bubble (question/idea) */
-    font-size: 24px;
     background-color: #6495ED !important; /* Cornflower blue for student */
-    color: white !important; /* Ensure the emoji is visible */
+    color: white !important;
 }
 
 /* Style the chat input box to match the theme */
@@ -50,91 +50,104 @@ st.markdown("""
     border-radius: 15px;
 }
 
+/* Ensures the markdown links rendered as HTML are styled nicely */
+a:link, a:visited {
+    color: #0047AB; /* Dark blue for links */
+    text-decoration: underline;
+}
+
+/* Custom button styling for the feedback options */
+.feedback-button {
+    background-color: #ffffff;
+    color: #0047AB;
+    border: 1px solid #0047AB;
+    border-radius: 8px;
+    padding: 8px 15px;
+    margin: 5px 5px 5px 0;
+    cursor: pointer;
+    transition: background-color 0.2s;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.feedback-button:hover {
+    background-color: #0047AB;
+    color: #ffffff;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
-# --- AI and API Configuration ---
-    
-# This system prompt defines the AI's persona and rules.
-# It's crucial for guiding the AI to act as a Socratic tutor.
+# --- AI and API Configuration: System Instructions ---
 system_instructions = """
 You are 'EduAI Tutor,' a personalized, Socratic AI learning companion specializing in high school level Science and Math. Your primary goal is to foster deep understanding, critical thinking, and problem-solving skills.
 
 CORE METHODOLOGY: "GUIDE, DON'T JUST GIVE."
- 
+ 
 STRICT RULES:
 1.  **Socratic Dialogue:** Respond by asking simplified, guiding questions. Your response must *never* contain the final answer initially.
 2.  **Adaptive Simplification:** If the student's question is complex, break it into smaller, foundational components before asking your question.
-3.  **Feedback Check & Dynamic Adjustment:** You must analyze the student's current message for specific feedback:
-    * **If the student uses a keyword like "I get it" or "understood" OR gives a correct answer:** Provide positive reinforcement, summarize the learned concept concisely, and suggest a logical, curated follow-up question to guide them along a learning path.
-    * **If the student uses a keyword like "A bit confusing" or "not sure" OR gives a partially correct answer:** Gently rephrase the previous question, offer a hint, or provide a simple analogy to address the specific point of confusion.
-    * **If the student explicitly uses a keyword like "I'm lost," "stuck," or "need the answer," OR if they upload an image of a problem:** ONLY THEN provide a detailed, step-by-step explanation. Ensure this detailed answer is grounded in a relatable, real-world context to make the abstract concrete.
-4.  **Resource Guidance:** In your guiding response, always encourage the student to consult external resources (e.g., "Think about what happens to pressure when volume changes," or "You might want to quickly search for the definition of the Pythagorean theorem.") before asking your next guiding question.
+3.  **Feedback Check & Dynamic Adjustment:** Use the keywords provided by the student to adjust your response.
+    * **If the student uses a keyword like "I get it" or "understood" OR gives a correct answer:** Provide positive reinforcement, summarize the learned concept concisely, and suggest a logical, curated follow-up question.
+    * **If the student uses a keyword like "A bit confusing" or "not sure" OR gives a partially correct answer:** Gently rephrase the previous question, offer a hint, or provide a simple analogy.
+    * **If the student explicitly uses a keyword like "I'm lost," "stuck," or "need the answer," OR if they upload an image of a problem:** ONLY THEN provide a detailed, step-by-step explanation.
+4.  **Resource Guidance & Grounding:** **ALWAYS** find 5 relevant external resources for the topic being discussed. You must use the grounding tool for this.
 5.  **Tone:** Maintain a patient, encouraging, and supportive tone at all times.
-6.  **Multimodal Input:** If the input includes an image, acknowledge the visual and treat it as a problem statement requiring Socratic guidance first (Rule 1).
-"""
 
-# Add new instructions for response structure
-system_instructions += """
-
-RESPONSE STRUCTURE: Every response MUST conclude with two sections. The topic links MUST be a valid URL:
-1.  **"Here are some topics and resources to help you find the answer:"** followed by a bulleted list of 3-5 relevant topics for further reading. Each topic should be presented as "Topic Name - Read more".
+RESPONSE STRUCTURE: Every response MUST conclude with two sections.
+1.  **"📚 Related Resources for Deeper Learning:"** followed by a bulleted list of 5 topics and their generated links. **Crucially, format these as standard Markdown links: `[Topic Name](URL)`**.
 2.  **"How are you feeling about this topic?"** followed by a list of predefined student response options, each on a new line: "I get it!", "A bit confusing.", "I'm lost.", "Explain it to me".
 """
-
-# TODO: Define the weather tool function declaration
-
-# TODO: Define the get_current_temperature function
 
 
 # --- Initialize the Vertex AI Client ---
 try:
-      # TODO: Initialize the Vertex AI client
-      client = genai.Client(
-          vertexai=True,
-          project=PROJECT_ID,
-          location=REGION,
-      )
-    
+    # Initialize the Gemini client using Vertex AI configuration
+    client = genai.Client(
+        vertexai=True,
+        project=PROJECT_ID,
+        location=REGION,
+    )
 except Exception as e:
-    st.error(f"Error initializing VertexAI client: {e}")
+    st.error(f"Error initializing VertexAI client. Please check your PROJECT_ID: {e}")
     st.stop()
 
 
-# TODO: Add the get_chat function here in Task 15.
-
-# --- Call the Model ---
-
-# --- Call the Model (Updated for Context & Multimodal) ---
+# --- Call the Model (With Grounding) ---
 def call_model(messages: list, model_name: str) -> str:
     """
-    Interacts with the LLM using the full chat history for context and handles optional image uploads.
+    Interacts with the LLM using the full chat history for context and enables Google Search grounding
+    to fetch real-time links.
 
-    Args:
-        messages (list): The list of messages in the chat history.
-        model_name (str): The name of the language model to use.
-    Returns:
-        str: The response text from the model.
+    Args:
+        messages (list): The list of messages in the chat history.
+        model_name (str): The name of the language model to use.
+    Returns:
+        str: The response text from the model.
     """
     try:
-        # Convert Streamlit messages history to GenAI contents format (list of Content objects)
+        # Convert Streamlit messages history to GenAI contents format
         contents = []
         for msg in messages:
-            # Streamlit uses 'assistant' and 'user'. GenAI uses 'model' for the AI's role.
+            # GenAI uses 'model' for the AI's role.
             role = "model" if msg["role"] == "assistant" else "user"
             
             # Skip the initial welcome message from the assistant for the API call 
             if msg["role"] == "assistant" and msg["content"].startswith("Hello! I am EduAI Tutor"):
                 continue
 
-            parts = [{"text": msg["content"]}]
+            # Ensure we only pass the text of the message, not potentially lingering button state
+            parts = [types.Part.from_text(text=msg["content"])]
             contents.append(types.Content(role=role, parts=parts))
 
+        # Configuration for the call, including system instructions and the grounding tool
         generate_content_config = types.GenerateContentConfig(
             system_instruction=[
                 types.Part.from_text(text=system_instructions)
             ],
+            # This enables the model to use Google Search to find real-time links and topics.
+            tools=[{"google_search": {}}], 
+            temperature=0.9
         )
 
         response = client.models.generate_content(
@@ -143,24 +156,28 @@ def call_model(messages: list, model_name: str) -> str:
             config=generate_content_config,
         )
 
-        # Custom links for each topic
-        topic_links = {
-            "Pythagorean Theorem": "<a href='https://en.wikipedia.org/wiki/Pythagorean_theorem' target='_blank'>Pythagorean Theorem</a>",
-            "Kinetic Energy": "<a href='https://en.wikipedia.org/wiki/Kinetic_energy' target='_blank'>Kinetic Energy</a>",
-            "Cell Structure": "<a href='https://en.wikipedia.org/wiki/Cell_(biology)' target='_blank'>Cell Structure</a>",
-            "Photosynthesis": "<a href='https://en.wikipedia.org/wiki/Photosynthesis' target='_blank'>Photosynthesis</a>",
-            "Algebraic Equations": "<a href='https://en.wikipedia.org/wiki/Algebraic_equation' target='_blank'>Algebraic Equations</a>",
-        }
-
-        # Replace topic names with links
-        response_text = response.text
-        for topic, link in topic_links.items():
-            response_text = response_text.replace(f"{topic} - Read more", f"{link} - Read more")
-
-        return response_text
+        # The model is instructed to output Markdown links [Topic](URL), 
+        # which Streamlit will render as clickable links because of unsafe_allow_html=True.
+        return response.text
+    
     except Exception as e:
-        return f"Error: {e}"
+        logging.error(f"Gemini API Error: {e}")
+        return f"🚨 **Error:** Failed to communicate with the AI Tutor. Details: {e}"
 
+
+# --- Button Callback Function ---
+def handle_feedback_click(feedback_text):
+    """
+    Handles the click event from the feedback buttons.
+    1. Sends the feedback text as a new user message.
+    2. Runs the model to generate the next response.
+    3. Triggers a rerun of the app to display the new chat.
+    """
+    # 1. Add the selected feedback as a user message
+    st.session_state.messages.append({"role": "user", "content": feedback_text})
+    
+    # 2. Set a flag to process the new message immediately
+    st.session_state.process_feedback = True
 
 # --- Presentation Tier (Streamlit) ---
 # Set the title of the Streamlit application
@@ -170,27 +187,100 @@ st.title("📚 EduAI Tutor")
 if "messages" not in st.session_state:
     # Initialize the chat history with a welcome message
     st.session_state["messages"] = [
-        {"role": "assistant", "content": "Hello! I am EduAI Tutor. Ask me a complex question, and I will guide you on how to find the answer yourself.?"}
+        {"role": "assistant", "content": "Hello! I am EduAI Tutor. Ask me a complex question about Science or Math, and I will guide you on how to find the answer yourself."}
     ]
 
+# Initialize feedback options flag
+if "show_feedback_buttons" not in st.session_state:
+    st.session_state.show_feedback_buttons = False
+
+# Initialize the state to handle immediate feedback processing
+if "process_feedback" not in st.session_state:
+    st.session_state.process_feedback = False
+
+
 # Display the chat history
-for msg in st.session_state.messages: 
+for msg_index, msg in enumerate(st.session_state.messages): 
+    # Use unsafe_allow_html=True to render the Markdown links and custom CSS in the messages
     st.chat_message(msg["role"]).write(msg["content"], unsafe_allow_html=True)
+    
+    # Check if this is the last message and it's from the assistant
+    is_last_assistant_message = (msg_index == len(st.session_state.messages) - 1 and msg["role"] == "assistant")
+    
+    # Check if the last assistant message contains the feedback prompt, AND 
+    # the buttons haven't been hidden yet.
+    if is_last_assistant_message and "How are you feeling about this topic?" in msg["content"]:
+        st.session_state.show_feedback_buttons = True
+        # Remove the text options from the displayed message (since we'll show buttons)
+        
+        # --- Extract the options from the model's text for dynamic button creation (optional) ---
+        # For simplicity, we'll hardcode the buttons to match the instructions, 
+        # but in a more complex app, you might parse the response text.
+        feedback_options = ["I get it!", "A bit confusing.", "I'm lost.", "Explain it to me"]
 
-# Get user input
-if prompt := st.chat_input():
-    # Add the user's message to the chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    # Display the user's message
-    st.chat_message("user").write(prompt)
+        # Only show the buttons if the flag is True (i.e., we haven't processed a click yet)
+        if st.session_state.show_feedback_buttons:
+            # Create an inline container for the buttons
+            st.markdown("---")
+            st.markdown("**What would you like to do next?**")
+            cols = st.columns(len(feedback_options))
+            
+            # Use the column layout to place buttons side-by-side
+            for i, option in enumerate(feedback_options):
+                with cols[i]:
+                    st.button(
+                        option, 
+                        key=f"feedback_{i}", 
+                        on_click=handle_feedback_click, 
+                        args=[option],
+                        help=f"Click here if you feel: {option}",
+                        use_container_width=True
+                    )
+        
+# --- Main Chat Input & Logic ---
 
-    # Show a spinner while waiting for the model's response
-    with st.spinner(" EduAI Tutor is Thinking..."):
-        # Get the model's response using the call_model function
+# Handle the case where a user clicked a button
+if st.session_state.process_feedback:
+    # Reset the flag and clear the buttons
+    st.session_state.process_feedback = False
+    st.session_state.show_feedback_buttons = False
+    
+    # The last message is the user feedback (e.g., "I get it!")
+    last_prompt = st.session_state.messages[-1]["content"]
+    
+    # Display the simulated user message (the button click)
+    st.chat_message("user").write(last_prompt)
+
+    # Rerun the model call with the new message
+    with st.spinner(f"EduAI Tutor is analyzing: {last_prompt}..."):
         model_response = call_model(st.session_state.messages, GEMINI_MODEL_NAME)
-        # Add the model's response to the chat history
+        
+        # Add the model's new response to the chat history and display it
         st.session_state.messages.append(
             {"role": "assistant", "content": model_response}
         )
-        # Display the model's response
+        st.chat_message("assistant").write(model_response, unsafe_allow_html=True)
+    
+    # Trigger a script rerun to update the chat UI cleanly
+    st.rerun()
+
+# Handle the case where the user types a new prompt
+if prompt := st.chat_input("Ask me about Pythagorean Theorem, Cell Structure, or any topic...", disabled=st.session_state.show_feedback_buttons):
+    # Hide the feedback buttons if the user types a new message
+    st.session_state.show_feedback_buttons = False
+    
+    # 1. Add the user's message to the chat history and display it
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
+
+    # 2. Show a spinner while waiting for the model's response
+    with st.spinner(" EduAI Tutor is Thinking..."):
+        # Get the model's response using the call_model function
+        model_response = call_model(st.session_state.messages, GEMINI_MODEL_NAME)
+        
+        # 3. Add the model's response to the chat history and display it
+        st.session_state.messages.append(
+            {"role": "assistant", "content": model_response}
+        )
+        # Use unsafe_allow_html=True to render the Markdown links as clickable HTML
         st.chat_message("assistant").write(model_response, unsafe_allow_html=True)
